@@ -1,0 +1,449 @@
+{
+ "cells": [
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "metadata": {
+    "id": "FpGHI1hzZN7s"
+   },
+   "outputs": [],
+   "source": [
+    "import numpy as np\n",
+    "import cv2\n",
+    "import os\n",
+    "import random\n",
+    "import matplotlib.pyplot as plt\n",
+    "import datetime\n",
+    "from keras.models import Sequential, load_model\n",
+    "from tensorflow.keras import layers, regularizers\n",
+    "from keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout, BatchNormalization\n",
+    "import tensorflow as tf\n",
+    "from keras.preprocessing.image import ImageDataGenerator\n",
+    "from scipy import misc, ndimage\n",
+    "from PIL import Image\n",
+    "from keras.optimizers import Adam, RMSprop\n",
+    "import time\n",
+    "from IPython.display import clear_output\n",
+    "from keras.backend import sigmoid\n",
+    "def swish(x, beta = 1):\n",
+    "    return (x * sigmoid(beta * x))\n",
+    "from keras.utils.generic_utils import get_custom_objects\n",
+    "from keras.layers import Activation\n",
+    "get_custom_objects().update({'swish': Activation(swish)})\n",
+    "from keras.regularizers import l2, l1, l1_l2\n",
+    "from keras.backend import manual_variable_initialization \n",
+    "manual_variable_initialization(True)\n",
+    "from sklearn.metrics import classification_report, confusion_matrix\n",
+    "import requests\n",
+    "import json"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 12,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def pushbullet_message(title, body):\n",
+    "    msg = {\"type\": \"note\", \"title\": title, \"body\": body}\n",
+    "    TOKEN = 'o.kSuUo4TPKsBX1Wh4yVyGeIHIruAzL0vs'\n",
+    "    resp = requests.post('https://api.pushbullet.com/v2/pushes', \n",
+    "                         data=json.dumps(msg),\n",
+    "                         headers={'Authorization': 'Bearer ' + TOKEN,\n",
+    "                                  'Content-Type': 'application/json'})\n",
+    "    if resp.status_code != 200:\n",
+    "        raise Exception('Error',resp.status_code)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def check_accuracy(mdl, X_val, y_val):\n",
+    "    true = 0\n",
+    "    Y_pred = mdl.predict(X_val)\n",
+    "    y_pred = np.argmax(Y_pred, axis=1)\n",
+    "    for j in range(len(y_val)):\n",
+    "        if y_pred[j] == y_val[j]:\n",
+    "            true += 1\n",
+    "    acc = (true/len(y_new))*100\n",
+    "    return acc"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def check_highest(folder_path1):\n",
+    "    max_acc = []\n",
+    "    max_i = []\n",
+    "    for i in os.listdir(folder_path1):\n",
+    "        model = load_model(folder_path1 + i, custom_objects = {\"Activation\": Activation})\n",
+    "        acc = check_accuracy(model, X_new, y_new)\n",
+    "        print('Model Accuracy =', str(acc) + '%')\n",
+    "        if acc >= 94.5:\n",
+    "            os.remove(folder_path1 + i)\n",
+    "            new_name = i.replace(\".h5\",\"\") + '_' + str(round(acc, 2)) + '.h5'\n",
+    "            model.save('saved_models/' + new_name)\n",
+    "            max_acc.append(acc)\n",
+    "            max_i.append(new_name)\n",
+    "        else:\n",
+    "            os.remove(folder_path1 + i)\n",
+    "    max_acc = np.array(max_acc)\n",
+    "    max_i = np.array(max_i)\n",
+    "    maxx = np.amax(max_acc)\n",
+    "    index = np.where(max_acc == maxx)\n",
+    "    print('The highest Accuracy:', max_i[index], 'with', str(maxx) + '%')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 5,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "h8rAxA1vcYu3",
+    "outputId": "e450ff76-3198-4f34-8546-dd032e669d10"
+   },
+   "outputs": [],
+   "source": [
+    "# from google.colab import drive, output\n",
+    "\n",
+    "# drive.mount('/content/gdrive')\n",
+    "root_path = 'pothole_detection'"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 6,
+   "metadata": {
+    "id": "3CsxiXizZN7x"
+   },
+   "outputs": [],
+   "source": [
+    "dataset = 'dataset'\n",
+    "categories = ['pothole', 'no_pothole']\n",
+    "test_categories = ['test_pothole', 'test_no_pothole']\n",
+    "image_size = 120\n",
+    "data = []\n",
+    "data_test = []"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 7,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/"
+    },
+    "id": "sDc7zmzFZN70",
+    "outputId": "2da23daa-4c0c-4b3e-a694-a75e8feaee2c"
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "test_no_pothole 7191 1\n"
+     ]
+    }
+   ],
+   "source": [
+    "cnt = 0\n",
+    "for category in categories:\n",
+    "    folder = os.path.join(dataset, category)\n",
+    "    label = categories.index(category)\n",
+    "    for img in os.listdir(folder):\n",
+    "        img_path = os.path.join(folder, img)\n",
+    "        cnt+=1\n",
+    "        print(category, cnt, label)\n",
+    "        clear_output(wait = True)\n",
+    "        img_array = cv2.imread(img_path)\n",
+    "        img_array = cv2.resize(img_array, (image_size, image_size))\n",
+    "        data.append([img_array, label])\n",
+    "\n",
+    "for category in test_categories:\n",
+    "    folder = os.path.join(dataset, category)\n",
+    "    label = test_categories.index(category)\n",
+    "    for img in os.listdir(folder):\n",
+    "        img_path = os.path.join(folder, img)\n",
+    "        cnt+=1\n",
+    "        print(category, cnt, label)\n",
+    "        clear_output(wait = True)\n",
+    "        img_array = cv2.imread(img_path)\n",
+    "        img_array = cv2.resize(img_array, (image_size, image_size))\n",
+    "        data_test.append([img_array, label])"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 8,
+   "metadata": {
+    "id": "xRt-Vfo_ZN72"
+   },
+   "outputs": [],
+   "source": [
+    "np.random.shuffle(data)\n",
+    "np.random.shuffle(data_test)\n",
+    "\n",
+    "X_old = []\n",
+    "y_old = []\n",
+    "X_old_test = []\n",
+    "y_old_test = []\n",
+    "\n",
+    "for features, labels in data:\n",
+    "    X_old.append(features)\n",
+    "    y_old.append(labels)\n",
+    "\n",
+    "X_train = np.array(X_old)\n",
+    "y_train = np.array(y_old)\n",
+    "X_train = X_train/225\n",
+    "\n",
+    "for features, labels in data_test:\n",
+    "    X_old_test.append(features)\n",
+    "    y_old_test.append(labels)\n",
+    "\n",
+    "X_test = np.array(X_old_test)\n",
+    "y_test = np.array(y_old_test)\n",
+    "X_test = X_test/255"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 9,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "no_pothole 272 1\n"
+     ]
+    }
+   ],
+   "source": [
+    "root_path = ''\n",
+    "dataset = 'dataset'\n",
+    "categories = ['pothole', 'no_pothole']\n",
+    "image_size = 120\n",
+    "\n",
+    "folder_path = 'validation'\n",
+    "data_new = []\n",
+    "\n",
+    "cnt = 0\n",
+    "for category in categories:\n",
+    "    folder_new = os.path.join(dataset, folder_path, category)\n",
+    "    label_new = categories.index(category)\n",
+    "    for img_new in os.listdir(folder_new):\n",
+    "        img_path_new = os.path.join(folder_new, img_new)\n",
+    "        cnt+=1\n",
+    "        print(category, cnt, label_new)\n",
+    "        clear_output(wait = True)\n",
+    "        img_array_new = cv2.imread(img_path_new)\n",
+    "        img_array_new = cv2.resize(img_array_new, (image_size, image_size))\n",
+    "        data_new.append([img_array_new, label_new])\n",
+    "\n",
+    "np.random.shuffle(data_new)\n",
+    "X_old = []\n",
+    "y_old = []\n",
+    "\n",
+    "for features_new, labels_new in data_new:\n",
+    "    X_old.append(features_new)\n",
+    "    y_old.append(labels_new)\n",
+    "\n",
+    "X_new = np.array(X_old)\n",
+    "y_new = np.array(y_old)\n",
+    "X_new = X_new/225"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {
+    "id": "Nx5oT_MsbgND"
+   },
+   "source": [
+    "# **Cross Validation**"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 10,
+   "metadata": {
+    "colab": {
+     "base_uri": "https://localhost:8080/",
+     "height": 232
+    },
+    "id": "5LF-vohXY5oU",
+    "outputId": "153a76ef-c1ff-4076-bb2d-3176eee0ea1c"
+   },
+   "outputs": [],
+   "source": [
+    "from sklearn.model_selection import KFold\n",
+    "num_folds = 10\n",
+    "acc_per_fold = []\n",
+    "loss_per_fold = []\n",
+    "inputs = np.concatenate((X_train, X_test), axis=0)\n",
+    "targets = np.concatenate((y_train, y_test), axis=0)\n",
+    "kfold = KFold(n_splits=num_folds, shuffle=True)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 13,
+   "metadata": {
+    "hideOutput": false,
+    "id": "7DX5Q9jobz6h"
+   },
+   "outputs": [],
+   "source": [
+    "def train_cross_val(input_layer_neurons_val, first_layer_neurons_val, second_layer_neurons_val):\n",
+    "    fold_no = 1\n",
+    "    cnt = 1\n",
+    "    print('training')\n",
+    "    for train, test in kfold.split(X_train, y_train):\n",
+    "      print('Fold Num =', fold_no)  \n",
+    "      model = Sequential()\n",
+    "\n",
+    "      model.add(Conv2D(input_layer_neurons_val, (3, 3), kernel_regularizer = l1(0.000009), activity_regularizer = l1(0.0000009), activation = 'relu'))\n",
+    "      model.add(BatchNormalization())\n",
+    "      model.add(MaxPooling2D((2, 2)))\n",
+    "      model.add(Dropout(0.05))\n",
+    "\n",
+    "      model.add(Flatten())\n",
+    "\n",
+    "      model.add(Dense(first_layer_neurons_val, input_shape = X_train.shape[1:], kernel_initializer='random_normal', kernel_regularizer = l1(0.000009), activity_regularizer = l1(0.0000009), activation = 'relu'))\n",
+    "      model.add(Dropout(0.05))\n",
+    "\n",
+    "      model.add(Dense(second_layer_neurons_val, input_shape = X_train.shape[1:], kernel_initializer='random_normal', kernel_regularizer = l1(0.000009), activity_regularizer = l1(0.0000009), activation = 'relu'))\n",
+    "      model.add(Dropout(0.05))\n",
+    "\n",
+    "      model.add(Dense(2, activation = 'softmax'))\n",
+    "\n",
+    "      ###\n",
+    "\n",
+    "      model.compile(optimizer = 'adam', loss = 'sparse_categorical_crossentropy', metrics = ['accuracy'])\n",
+    "\n",
+    "      ###\n",
+    "      model.fit(X_train, y_train, epochs = 3, validation_data = (X_test, y_test), batch_size = 32, shuffle=True, verbose = 0)\n",
+    "\n",
+    "      scores = model.evaluate(inputs[test], targets[test], verbose=0)\n",
+    "\n",
+    "      acc_per_fold.append(scores[1] * 100)\n",
+    "      loss_per_fold.append(scores[0])\n",
+    "\n",
+    "\n",
+    "      fold_no = fold_no + 1\n",
+    "    print('finished', cnt)\n",
+    "    cnt += 1\n",
+    "    model.save('temp_models/' + (datetime.datetime.utcnow()+datetime.timedelta(hours=5.5)).strftime(\"%d-%m-%Y--%H.%M.%S\") + '.h5') "
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# **Auto Trainer**"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 14,
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Neurons = 22 16 16\n",
+      "training\n",
+      "Fold Num = 1\n",
+      "Fold Num = 2\n",
+      "Fold Num = 3\n",
+      "Fold Num = 4\n",
+      "Fold Num = 5\n",
+      "Fold Num = 6\n",
+      "Fold Num = 7\n",
+      "Fold Num = 8\n",
+      "Fold Num = 9\n",
+      "Fold Num = 10\n",
+      "finished 1\n"
+     ]
+    },
+    {
+     "ename": "TypeError",
+     "evalue": "check_highest() takes 1 positional argument but 2 were given",
+     "output_type": "error",
+     "traceback": [
+      "\u001b[0;31m---------------------------------------------------------------------------\u001b[0m",
+      "\u001b[0;31mTypeError\u001b[0m                                 Traceback (most recent call last)",
+      "\u001b[0;32m<ipython-input-14-930dc1a780fe>\u001b[0m in \u001b[0;36m<module>\u001b[0;34m\u001b[0m\n\u001b[1;32m     16\u001b[0m     \u001b[0mtrain_cross_val\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0mi\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;36m0\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mi\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;36m1\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mi\u001b[0m\u001b[0;34m[\u001b[0m\u001b[0;36m2\u001b[0m\u001b[0;34m]\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m     17\u001b[0m     \u001b[0mtime\u001b[0m\u001b[0;34m.\u001b[0m\u001b[0msleep\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;36m10\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0;32m---> 18\u001b[0;31m     \u001b[0mmaxx\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0macc\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mcheck_highest\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m'temp_models/'\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mmaxx\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[0m\u001b[1;32m     19\u001b[0m     \u001b[0mmessage\u001b[0m \u001b[0;34m=\u001b[0m \u001b[0mmessage\u001b[0m \u001b[0;34m+\u001b[0m \u001b[0;34m' with accuracy = '\u001b[0m \u001b[0;34m+\u001b[0m \u001b[0mstr\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0macc\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n\u001b[1;32m     20\u001b[0m     \u001b[0mpushbullet_message\u001b[0m\u001b[0;34m(\u001b[0m\u001b[0;34m'Finshed Training'\u001b[0m\u001b[0;34m,\u001b[0m \u001b[0mmessage\u001b[0m\u001b[0;34m)\u001b[0m\u001b[0;34m\u001b[0m\u001b[0;34m\u001b[0m\u001b[0m\n",
+      "\u001b[0;31mTypeError\u001b[0m: check_highest() takes 1 positional argument but 2 were given"
+     ]
+    }
+   ],
+   "source": [
+    "input_layer_neurons = list(np.arange(18, 23))\n",
+    "first_layer_neurons = list(np.arange(12, 17))\n",
+    "second_layer_neurons = list(np.arange(12, 17))\n",
+    "res = [[i, j, k] \n",
+    "       for i in input_layer_neurons  \n",
+    "       for j in first_layer_neurons\n",
+    "       for k in second_layer_neurons \n",
+    "        ] \n",
+    "res = res[::-1]\n",
+    "maxx = 0\n",
+    "count = 1\n",
+    "for i in res:\n",
+    "    print('Neurons =', i[0], i[1], i[2])\n",
+    "    message = 'Number ' + str(count)\n",
+    "    pushbullet_message('Started Training', message)\n",
+    "    train_cross_val(i[0], i[1], i[2])\n",
+    "    time.sleep(10)\n",
+    "    maxx, acc = check_highest('temp_models/', maxx)\n",
+    "    message = message + ' with accuracy = ' + str(acc)\n",
+    "    pushbullet_message('Finshed Training', message)\n",
+    "    count += 1\n",
+    "    print(count)\n",
+    "print('AHHHHHHH')"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": []
+  }
+ ],
+ "metadata": {
+  "colab": {
+   "collapsed_sections": [],
+   "name": "pothole_detection.ipynb",
+   "provenance": []
+  },
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.7.9"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 4
+}
